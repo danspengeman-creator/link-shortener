@@ -108,4 +108,294 @@
 
   function parseUA(ua) {
     if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Desktop' };
-    l
+    let browser = 'Other', os = 'Other', device = 'Desktop';
+    if (/Edg\//i.test(ua)) browser = 'Edge';
+    else if (/OPR\//i.test(ua)) browser = 'Opera';
+    else if (/Chrome\//i.test(ua)) browser = 'Chrome';
+    else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+    else if (/Safari\//i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
+    if (/Windows NT/i.test(ua)) os = 'Windows';
+    else if (/Mac OS X/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = 'macOS';
+    else if (/Android/i.test(ua)) os = 'Android';
+    else if (/iPhone/i.test(ua)) os = 'iOS (iPhone)';
+    else if (/iPad/i.test(ua)) os = 'iOS (iPad)';
+    else if (/Linux/i.test(ua)) os = 'Linux';
+    if (/Mobi|Android|iPhone/i.test(ua)) device = 'Mobile';
+    else if (/iPad|Tablet/i.test(ua)) device = 'Tablet';
+    return { browser, os, device };
+  }
+
+  function topN(arr, key, n = 5) {
+    const counts = {};
+    arr.forEach(item => {
+      const val = item[key] || 'Unknown';
+      counts[val] = (counts[val] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, n);
+  }
+
+  function faviconUrl(destination) {
+    return `${WORKER}/favicon?url=${encodeURIComponent(destination)}`;
+  }
+
+  function buildClicksChart(clicks) {
+    const counts = {};
+    clicks.forEach(c => {
+      const day = (c.clicked_at || '').slice(0, 10);
+      if (day) counts[day] = (counts[day] || 0) + 1;
+    });
+    const dates = Object.keys(counts).sort();
+    if (!dates.length) return;
+    const filled = [];
+    let cur = new Date(dates[0]);
+    const end = new Date(dates[dates.length - 1]);
+    while (cur <= end) {
+      const d = cur.toISOString().slice(0, 10);
+      filled.push({ date: d, count: counts[d] || 0 });
+      cur.setDate(cur.getDate() + 1);
+    }
+    if (clicksChartInstance) clicksChartInstance.destroy();
+    const ctx = document.getElementById('clicks-chart').getContext('2d');
+    clicksChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: filled.map(f => f.date),
+        datasets: [{
+          label: 'Clicks',
+          data: filled.map(f => f.count),
+          backgroundColor: '#a5b4fc',
+          borderColor: '#6366f1',
+          borderWidth: 1,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1 } },
+          x: { ticks: { maxRotation: 45 } }
+        }
+      }
+    });
+  }
+
+  async function createLink() {
+    const destination = document.getElementById('destination').value.trim();
+    const customSlug = document.getElementById('customSlug').value.trim();
+    const msg = document.getElementById('message');
+    msg.className = '';
+    if (!destination) { msg.className = 'error'; msg.textContent = 'Please enter a destination URL.'; return; }
+    try {
+      const res = await fetch(`${WORKER}/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination, customSlug: customSlug || undefined })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const short = `${WORKER}/${data.slug}`;
+        msg.textContent = `Created: ${short} (copied to clipboard)`;
+        navigator.clipboard.writeText(short).catch(() => {});
+        document.getElementById('destination').value = '';
+        document.getElementById('customSlug').value = '';
+        loadLinks();
+      } else {
+        msg.className = 'error';
+        msg.textContent = data.error || 'Something went wrong.';
+      }
+    } catch(e) {
+      msg.className = 'error';
+      msg.textContent = 'Could not reach the Worker.';
+    }
+  }
+
+  async function loadLinks() {
+    const container = document.getElementById('links-container');
+    cancelDelete();
+    openEditSlug = null;
+    try {
+      const res = await fetch(`${WORKER}/links`);
+      const links = await res.json();
+      if (!links.length) {
+        container.innerHTML = '<p id="no-links">No links yet. Create one above!</p>';
+        return;
+      }
+      let html = '<table><thead><tr><th>Short Link</th><th>Destination</th><th>Clicks</th><th>Created</th><th></th></tr></thead><tbody>';
+      for (const link of links) {
+        const short = `${WORKER}/${link.slug}`;
+        const fav = faviconUrl(link.destination);
+        html += `
+          <tr id="row-${link.slug}">
+            <td><a class="slug-link" href="${short}" target="_blank">/${link.slug}</a></td>
+            <td>
+              <div class="dest-cell">
+                <img src="${fav}" alt="" onerror="this.style.display=&#39;none&#39;" />
+                <span class="dest" title="${link.destination}">${link.destination}</span>
+              </div>
+            </td>
+            <td><span class="badge">${link.click_count}</span></td>
+            <td>${link.created_at ? link.created_at.split('T')[0] : '—'}</td>
+            <td>
+              <button class="btn-sm" onclick="copyLink('${short}')">Copy</button>
+              <button class="btn-sm" onclick="showStats('${link.slug}')">Stats</button>
+              <button class="btn-sm btn-success" onclick="toggleEdit('${link.slug}', '${link.destination.replace(/'/g, '&#39;')}')">Edit</button>
+              <button class="btn-sm btn-danger" onclick="requestDelete('${link.slug}')">Delete</button>
+            </td>
+          </tr>
+          <tr class="edit-row" id="edit-row-${link.slug}">
+            <td colspan="5">
+              <div class="edit-inner">
+                <input type="url" id="edit-input-${link.slug}" placeholder="New destination URL" />
+                <button class="btn-sm btn-success" onclick="saveEdit('${link.slug}')">Save</button>
+                <button class="btn-sm" onclick="toggleEdit('${link.slug}', '')">Cancel</button>
+              </div>
+            </td>
+          </tr>`;
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<p style="color:#dc2626">Could not load links.</p>';
+    }
+  }
+
+  function toggleEdit(slug, currentDest) {
+    if (openEditSlug && openEditSlug !== slug) {
+      document.getElementById(`edit-row-${openEditSlug}`).classList.remove('open');
+    }
+    const row = document.getElementById(`edit-row-${slug}`);
+    const input = document.getElementById(`edit-input-${slug}`);
+    if (row.classList.contains('open')) {
+      row.classList.remove('open');
+      openEditSlug = null;
+    } else {
+      row.classList.add('open');
+      input.value = currentDest;
+      input.focus();
+      openEditSlug = slug;
+    }
+  }
+
+  async function saveEdit(slug) {
+    const input = document.getElementById(`edit-input-${slug}`);
+    const destination = input.value.trim();
+    if (!destination) return;
+    const res = await fetch(`${WORKER}/edit/${slug}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination })
+    });
+    if (res.ok) {
+      loadLinks();
+    } else {
+      const data = await res.json();
+      alert(data.error || 'Could not save.');
+    }
+  }
+
+  function requestDelete(slug) {
+    pendingDelete = slug;
+    document.getElementById('confirm-text').textContent = `Delete /${slug} and all its click data?`;
+    document.getElementById('confirm-bar').classList.add('show');
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    await fetch(`${WORKER}/delete/${pendingDelete}`, { method: 'DELETE' });
+    pendingDelete = null;
+    loadLinks();
+  }
+
+  function cancelDelete() {
+    pendingDelete = null;
+    document.getElementById('confirm-bar').classList.remove('show');
+  }
+
+  function copyLink(url) {
+    navigator.clipboard.writeText(url).then(() => {
+      const msg = document.getElementById('message');
+      msg.className = '';
+      msg.textContent = `Copied: ${url}`;
+    });
+  }
+
+  async function showStats(slug) {
+    const res = await fetch(`${WORKER}/stats/${slug}`);
+    const data = await res.json();
+    const clicks = data.clicks || [];
+    document.getElementById('modal-title').textContent = `Stats for /${slug}`;
+    document.getElementById('modal-dest').textContent = data.link?.destination || '';
+    const enriched = clicks.map(c => ({ ...c, ...parseUA(c.user_agent) }));
+    const countries = [...new Set(enriched.map(c => c.country).filter(Boolean))];
+    const cities = [...new Set(enriched.map(c => c.city).filter(Boolean))];
+    const browsers = [...new Set(enriched.map(c => c.browser).filter(Boolean))];
+    const mobileClicks = enriched.filter(c => c.device === 'Mobile').length;
+    document.getElementById('stat-grid').innerHTML = `
+      <div class="stat-box"><div class="num">${clicks.length}</div><div class="label">Total Clicks</div></div>
+      <div class="stat-box"><div class="num">${countries.length}</div><div class="label">Countries</div></div>
+      <div class="stat-box"><div class="num">${cities.length}</div><div class="label">Cities</div></div>
+      <div class="stat-box"><div class="num">${browsers.length}</div><div class="label">Browsers</div></div>
+      <div class="stat-box"><div class="num">${mobileClicks}</div><div class="label">Mobile Clicks</div></div>
+    `;
+    buildClicksChart(enriched);
+    let tops = '';
+    if (clicks.length) {
+      const sections = [
+        { label: 'Top Countries', data: topN(enriched, 'country') },
+        { label: 'Top Cities', data: topN(enriched, 'city') },
+        { label: 'Top Browsers', data: topN(enriched, 'browser') },
+        { label: 'Top OS', data: topN(enriched, 'os') },
+        { label: 'Top Devices', data: topN(enriched, 'device') },
+        { label: 'Top ISPs', data: topN(enriched, 'isp') },
+        { label: 'Top Referrers', data: topN(enriched.map(c => ({ referrer: c.referrer || 'Direct' })), 'referrer') },
+      ];
+      for (const s of sections) {
+        if (!s.data.length) continue;
+        tops += `<p class="section-title">${s.label}</p><div class="top-list">`;
+        for (const [val, count] of s.data) {
+          tops += `<span class="top-tag">${val} (${count})</span>`;
+        }
+        tops += '</div>';
+      }
+    }
+    document.getElementById('top-sections').innerHTML = tops;
+    let log = '';
+    if (enriched.length) {
+      log = `<table class="click-table"><thead><tr>
+        <th>Time</th><th>Country</th><th>City</th><th>Region</th>
+        <th>Browser</th><th>OS</th><th>Device</th><th>ISP</th><th>Referrer</th>
+      </tr></thead><tbody>`;
+      for (const c of enriched) {
+        log += `<tr>
+          <td>${c.clicked_at || '—'}</td>
+          <td>${c.country || '—'}</td>
+          <td>${c.city || '—'}</td>
+          <td>${c.region || '—'}</td>
+          <td>${c.browser}</td>
+          <td>${c.os}</td>
+          <td>${c.device}</td>
+          <td>${c.isp || '—'}</td>
+          <td>${c.referrer || 'Direct'}</td>
+        </tr>`;
+      }
+      log += '</tbody></table>';
+    } else {
+      log = '<p style="color:#71717a;font-size:0.9rem;">No clicks yet.</p>';
+    }
+    document.getElementById('click-log').innerHTML = log;
+    document.getElementById('modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+  }
+
+  document.getElementById('modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  loadLinks();
+</script>
+</body>
+</html>
