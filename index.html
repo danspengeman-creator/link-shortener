@@ -222,3 +222,129 @@
           <td><span class="dest" title="${link.destination}">${link.destination}</span></td>
           <td><span class="badge">${link.click_count}</span></td>
           <td>${link.created_at ? link.created_at.split('T')[0] : '—'}</td>
+          <td>
+            <button class="btn-sm" onclick="copyLink('${short}')">Copy</button>
+            <button class="btn-sm" onclick="showStats('${link.slug}')">Stats</button>
+            <button class="btn-sm btn-danger" onclick="requestDelete('${link.slug}')">Delete</button>
+          </td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<p style="color:#dc2626">Could not load links.</p>';
+    }
+  }
+
+  function requestDelete(slug) {
+    pendingDelete = slug;
+    document.getElementById('confirm-text').textContent = `Delete /${slug} and all its click data?`;
+    document.getElementById('confirm-bar').classList.add('show');
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    await fetch(`${WORKER}/delete/${pendingDelete}`, { method: 'DELETE' });
+    pendingDelete = null;
+    loadLinks();
+  }
+
+  function cancelDelete() {
+    pendingDelete = null;
+    document.getElementById('confirm-bar').classList.remove('show');
+  }
+
+  function copyLink(url) {
+    navigator.clipboard.writeText(url).then(() => {
+      const msg = document.getElementById('message');
+      msg.className = '';
+      msg.textContent = `Copied: ${url}`;
+    });
+  }
+
+  async function showStats(slug) {
+    const res = await fetch(`${WORKER}/stats/${slug}`);
+    const data = await res.json();
+    const clicks = data.clicks || [];
+
+    document.getElementById('modal-title').textContent = `Stats for /${slug}`;
+    document.getElementById('modal-dest').textContent = data.link?.destination || '';
+
+    const enriched = clicks.map(c => ({ ...c, ...parseUA(c.user_agent) }));
+
+    const countries = [...new Set(enriched.map(c => c.country).filter(Boolean))];
+    const cities = [...new Set(enriched.map(c => c.city).filter(Boolean))];
+    const browsers = [...new Set(enriched.map(c => c.browser).filter(Boolean))];
+    const mobileClicks = enriched.filter(c => c.device === 'Mobile').length;
+
+    document.getElementById('stat-grid').innerHTML = `
+      <div class="stat-box"><div class="num">${clicks.length}</div><div class="label">Total Clicks</div></div>
+      <div class="stat-box"><div class="num">${countries.length}</div><div class="label">Countries</div></div>
+      <div class="stat-box"><div class="num">${cities.length}</div><div class="label">Cities</div></div>
+      <div class="stat-box"><div class="num">${browsers.length}</div><div class="label">Browsers</div></div>
+      <div class="stat-box"><div class="num">${mobileClicks}</div><div class="label">Mobile Clicks</div></div>
+    `;
+
+    buildClicksChart(enriched);
+
+    let tops = '';
+    if (clicks.length) {
+      const sections = [
+        { label: 'Top Countries', data: topN(enriched, 'country') },
+        { label: 'Top Cities', data: topN(enriched, 'city') },
+        { label: 'Top Browsers', data: topN(enriched, 'browser') },
+        { label: 'Top OS', data: topN(enriched, 'os') },
+        { label: 'Top Devices', data: topN(enriched, 'device') },
+        { label: 'Top ISPs', data: topN(enriched, 'isp') },
+        { label: 'Top Referrers', data: topN(enriched.map(c => ({ referrer: c.referrer || 'Direct' })), 'referrer') },
+      ];
+      for (const s of sections) {
+        if (!s.data.length) continue;
+        tops += `<p class="section-title">${s.label}</p><div class="top-list">`;
+        for (const [val, count] of s.data) {
+          tops += `<span class="top-tag">${val} (${count})</span>`;
+        }
+        tops += '</div>';
+      }
+    }
+    document.getElementById('top-sections').innerHTML = tops;
+
+    let log = '';
+    if (enriched.length) {
+      log = `<table class="click-table"><thead><tr>
+        <th>Time</th><th>Country</th><th>City</th><th>Region</th>
+        <th>Browser</th><th>OS</th><th>Device</th><th>ISP</th><th>Referrer</th>
+      </tr></thead><tbody>`;
+      for (const c of enriched) {
+        log += `<tr>
+          <td>${c.clicked_at || '—'}</td>
+          <td>${c.country || '—'}</td>
+          <td>${c.city || '—'}</td>
+          <td>${c.region || '—'}</td>
+          <td>${c.browser}</td>
+          <td>${c.os}</td>
+          <td>${c.device}</td>
+          <td>${c.isp || '—'}</td>
+          <td>${c.referrer || 'Direct'}</td>
+        </tr>`;
+      }
+      log += '</tbody></table>';
+    } else {
+      log = '<p style="color:#71717a;font-size:0.9rem;">No clicks yet.</p>';
+    }
+    document.getElementById('click-log').innerHTML = log;
+    document.getElementById('modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+  }
+
+  document.getElementById('modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  loadLinks();
+</script>
+</body>
+</html>
