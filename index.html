@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Link Shortener</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #f4f4f5; color: #18181b; min-height: 100vh; padding: 2rem; }
@@ -17,6 +18,8 @@
     .btn-primary:hover { background: #4f46e5; }
     .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; background: #e4e4e7; color: #3f3f46; border-radius: 6px; border: none; cursor: pointer; margin-left: 0.25rem; }
     .btn-sm:hover { background: #d4d4d8; }
+    .btn-danger { background: #fee2e2; color: #dc2626; }
+    .btn-danger:hover { background: #fecaca; }
     #message { margin-top: 0.75rem; font-size: 0.9rem; color: #16a34a; min-height: 1.2rem; }
     #message.error { color: #dc2626; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
@@ -29,20 +32,22 @@
     .badge { display: inline-block; background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600; }
     .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; align-items: center; justify-content: center; }
     .modal-bg.open { display: flex; }
-    .modal { background: #fff; border-radius: 12px; padding: 1.5rem; width: 95%; max-width: 780px; max-height: 85vh; overflow-y: auto; position: relative; }
+    .modal { background: #fff; border-radius: 12px; padding: 1.5rem; width: 95%; max-width: 820px; max-height: 88vh; overflow-y: auto; position: relative; }
     .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #71717a; }
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
     .stat-box { background: #f4f4f5; border-radius: 8px; padding: 0.75rem 1rem; text-align: center; }
     .stat-box .num { font-size: 1.4rem; font-weight: 700; color: #6366f1; }
     .stat-box .label { font-size: 0.72rem; color: #71717a; margin-top: 0.2rem; text-transform: uppercase; letter-spacing: 0.03em; }
     .section-title { font-size: 0.95rem; font-weight: 600; margin: 1.25rem 0 0.6rem; color: #3f3f46; }
+    .chart-wrap { background: #f9f9fb; border-radius: 10px; padding: 1rem; margin-bottom: 0.5rem; }
+    .top-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem; }
+    .top-tag { background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.2rem 0.65rem; font-size: 0.78rem; font-weight: 600; }
     .click-table { font-size: 0.78rem; }
     .click-table th { font-size: 0.75rem; }
     .click-table td { padding: 0.45rem 0.6rem; }
-    .ua-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #71717a; }
-    .top-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem; }
-    .top-tag { background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.2rem 0.65rem; font-size: 0.78rem; font-weight: 600; }
     #no-links { color: #71717a; font-size: 0.9rem; padding: 1rem 0; }
+    .confirm-bar { display: none; align-items: center; gap: 0.75rem; background: #fee2e2; border-radius: 8px; padding: 0.6rem 1rem; margin-top: 0.5rem; font-size: 0.9rem; }
+    .confirm-bar.show { display: flex; }
   </style>
 </head>
 <body>
@@ -62,6 +67,11 @@
 <div class="card">
   <h2>Your Links</h2>
   <div id="links-container"><p id="no-links">Loading...</p></div>
+  <div class="confirm-bar" id="confirm-bar">
+    <span id="confirm-text"></span>
+    <button class="btn-sm btn-danger" onclick="confirmDelete()">Yes, delete</button>
+    <button class="btn-sm" onclick="cancelDelete()">Cancel</button>
+  </div>
 </div>
 
 <div class="modal-bg" id="modal">
@@ -72,6 +82,11 @@
 
     <div class="stat-grid" id="stat-grid"></div>
 
+    <p class="section-title">Clicks Over Time</p>
+    <div class="chart-wrap">
+      <canvas id="clicks-chart" height="100"></canvas>
+    </div>
+
     <div id="top-sections"></div>
 
     <p class="section-title">Click Log</p>
@@ -81,27 +96,25 @@
 
 <script>
   const WORKER = 'https://link-shortener.danspengeman.workers.dev';
+  let pendingDelete = null;
+  let clicksChartInstance = null;
 
   function parseUA(ua) {
-    if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Unknown' };
+    if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Desktop' };
     let browser = 'Other', os = 'Other', device = 'Desktop';
-
     if (/Edg\//i.test(ua)) browser = 'Edge';
     else if (/OPR\//i.test(ua)) browser = 'Opera';
     else if (/Chrome\//i.test(ua)) browser = 'Chrome';
     else if (/Firefox\//i.test(ua)) browser = 'Firefox';
     else if (/Safari\//i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
-
     if (/Windows NT/i.test(ua)) os = 'Windows';
     else if (/Mac OS X/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = 'macOS';
     else if (/Android/i.test(ua)) os = 'Android';
     else if (/iPhone/i.test(ua)) os = 'iOS (iPhone)';
     else if (/iPad/i.test(ua)) os = 'iOS (iPad)';
     else if (/Linux/i.test(ua)) os = 'Linux';
-
     if (/Mobi|Android|iPhone/i.test(ua)) device = 'Mobile';
     else if (/iPad|Tablet/i.test(ua)) device = 'Tablet';
-
     return { browser, os, device };
   }
 
@@ -112,6 +125,53 @@
       counts[val] = (counts[val] || 0) + 1;
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, n);
+  }
+
+  function buildClicksChart(clicks) {
+    // Group clicks by date
+    const counts = {};
+    clicks.forEach(c => {
+      const day = (c.clicked_at || '').slice(0, 10);
+      if (day) counts[day] = (counts[day] || 0) + 1;
+    });
+    // Fill in gaps between first and last date
+    const dates = Object.keys(counts).sort();
+    if (!dates.length) return;
+    const filled = [];
+    let cur = new Date(dates[0]);
+    const end = new Date(dates[dates.length - 1]);
+    while (cur <= end) {
+      const d = cur.toISOString().slice(0, 10);
+      filled.push({ date: d, count: counts[d] || 0 });
+      cur.setDate(cur.getDate() + 1);
+    }
+    if (clicksChartInstance) clicksChartInstance.destroy();
+    const ctx = document.getElementById('clicks-chart').getContext('2d');
+    clicksChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: filled.map(f => f.date),
+        datasets: [{
+          label: 'Clicks',
+          data: filled.map(f => f.count),
+          backgroundColor: '#a5b4fc',
+          borderColor: '#6366f1',
+          borderWidth: 1,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { title: t => t[0].label } }
+        },
+        scales: {
+          y: { beginAtZero: true, ticks: { stepSize: 1 } },
+          x: { ticks: { maxRotation: 45 } }
+        }
+      }
+    });
   }
 
   async function createLink() {
@@ -146,6 +206,7 @@
 
   async function loadLinks() {
     const container = document.getElementById('links-container');
+    cancelDelete();
     try {
       const res = await fetch(`${WORKER}/links`);
       const links = await res.json();
@@ -161,112 +222,3 @@
           <td><span class="dest" title="${link.destination}">${link.destination}</span></td>
           <td><span class="badge">${link.click_count}</span></td>
           <td>${link.created_at ? link.created_at.split('T')[0] : '—'}</td>
-          <td>
-            <button class="btn-sm" onclick="copyLink('${short}')">Copy</button>
-            <button class="btn-sm" onclick="showStats('${link.slug}')">Stats</button>
-          </td>
-        </tr>`;
-      }
-      html += '</tbody></table>';
-      container.innerHTML = html;
-    } catch(e) {
-      container.innerHTML = '<p style="color:#dc2626">Could not load links.</p>';
-    }
-  }
-
-  function copyLink(url) {
-    navigator.clipboard.writeText(url).then(() => {
-      const msg = document.getElementById('message');
-      msg.className = '';
-      msg.textContent = `Copied: ${url}`;
-    });
-  }
-
-  async function showStats(slug) {
-    const res = await fetch(`${WORKER}/stats/${slug}`);
-    const data = await res.json();
-    const clicks = data.clicks || [];
-
-    document.getElementById('modal-title').textContent = `Stats for /${slug}`;
-    document.getElementById('modal-dest').textContent = data.link?.destination || '';
-
-    // Parse UAs
-    const enriched = clicks.map(c => ({ ...c, ...parseUA(c.user_agent) }));
-
-    // Summary stats
-    const countries = [...new Set(enriched.map(c => c.country).filter(Boolean))];
-    const cities = [...new Set(enriched.map(c => c.city).filter(Boolean))];
-    const browsers = [...new Set(enriched.map(c => c.browser).filter(Boolean))];
-    const devices = enriched.filter(c => c.device === 'Mobile').length;
-
-    document.getElementById('stat-grid').innerHTML = `
-      <div class="stat-box"><div class="num">${clicks.length}</div><div class="label">Total Clicks</div></div>
-      <div class="stat-box"><div class="num">${countries.length}</div><div class="label">Countries</div></div>
-      <div class="stat-box"><div class="num">${cities.length}</div><div class="label">Cities</div></div>
-      <div class="stat-box"><div class="num">${browsers.length}</div><div class="label">Browsers</div></div>
-      <div class="stat-box"><div class="num">${devices}</div><div class="label">Mobile Clicks</div></div>
-    `;
-
-    // Top lists
-    let tops = '';
-    if (clicks.length) {
-      const sections = [
-        { label: 'Top Countries', data: topN(enriched, 'country') },
-        { label: 'Top Cities', data: topN(enriched, 'city') },
-        { label: 'Top Browsers', data: topN(enriched, 'browser') },
-        { label: 'Top OS', data: topN(enriched, 'os') },
-        { label: 'Top Devices', data: topN(enriched, 'device') },
-        { label: 'Top ISPs', data: topN(enriched, 'isp') },
-        { label: 'Top Referrers', data: topN(enriched.map(c => ({ referrer: c.referrer || 'Direct' })), 'referrer') },
-      ];
-      for (const s of sections) {
-        if (!s.data.length) continue;
-        tops += `<p class="section-title">${s.label}</p><div class="top-list">`;
-        for (const [val, count] of s.data) {
-          tops += `<span class="top-tag">${val} (${count})</span>`;
-        }
-        tops += '</div>';
-      }
-    }
-    document.getElementById('top-sections').innerHTML = tops;
-
-    // Click log
-    let log = '';
-    if (enriched.length) {
-      log = `<table class="click-table"><thead><tr>
-        <th>Time</th><th>Country</th><th>City</th><th>Region</th>
-        <th>Browser</th><th>OS</th><th>Device</th><th>ISP</th><th>Referrer</th>
-      </tr></thead><tbody>`;
-      for (const c of enriched) {
-        log += `<tr>
-          <td>${c.clicked_at || '—'}</td>
-          <td>${c.country || '—'}</td>
-          <td>${c.city || '—'}</td>
-          <td>${c.region || '—'}</td>
-          <td>${c.browser}</td>
-          <td>${c.os}</td>
-          <td>${c.device}</td>
-          <td>${c.isp || '—'}</td>
-          <td>${c.referrer || 'Direct'}</td>
-        </tr>`;
-      }
-      log += '</tbody></table>';
-    } else {
-      log = '<p style="color:#71717a;font-size:0.9rem;">No clicks yet.</p>';
-    }
-    document.getElementById('click-log').innerHTML = log;
-    document.getElementById('modal').classList.add('open');
-  }
-
-  function closeModal() {
-    document.getElementById('modal').classList.remove('open');
-  }
-
-  document.getElementById('modal').addEventListener('click', function(e) {
-    if (e.target === this) closeModal();
-  });
-
-  loadLinks();
-</script>
-</body>
-</html>
