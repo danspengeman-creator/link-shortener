@@ -15,7 +15,7 @@
     button { padding: 0.6rem 1.2rem; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; font-weight: 600; }
     .btn-primary { background: #6366f1; color: #fff; }
     .btn-primary:hover { background: #4f46e5; }
-    .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; background: #e4e4e7; color: #3f3f46; border-radius: 6px; border: none; cursor: pointer; }
+    .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; background: #e4e4e7; color: #3f3f46; border-radius: 6px; border: none; cursor: pointer; margin-left: 0.25rem; }
     .btn-sm:hover { background: #d4d4d8; }
     #message { margin-top: 0.75rem; font-size: 0.9rem; color: #16a34a; min-height: 1.2rem; }
     #message.error { color: #dc2626; }
@@ -25,18 +25,23 @@
     tr:last-child td { border-bottom: none; }
     .slug-link { color: #6366f1; text-decoration: none; font-weight: 600; }
     .slug-link:hover { text-decoration: underline; }
-    .dest { color: #71717a; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    .dest { color: #71717a; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
     .badge { display: inline-block; background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600; }
     .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; align-items: center; justify-content: center; }
     .modal-bg.open { display: flex; }
-    .modal { background: #fff; border-radius: 12px; padding: 1.5rem; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; position: relative; }
-    .modal h2 { margin-bottom: 0.5rem; }
+    .modal { background: #fff; border-radius: 12px; padding: 1.5rem; width: 95%; max-width: 780px; max-height: 85vh; overflow-y: auto; position: relative; }
     .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #71717a; }
-    .stat-row { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .stat-box { flex: 1; min-width: 100px; background: #f4f4f5; border-radius: 8px; padding: 0.75rem 1rem; text-align: center; }
-    .stat-box .num { font-size: 1.5rem; font-weight: 700; color: #6366f1; }
-    .stat-box .label { font-size: 0.75rem; color: #71717a; margin-top: 0.2rem; }
-    .click-table th, .click-table td { font-size: 0.8rem; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+    .stat-box { background: #f4f4f5; border-radius: 8px; padding: 0.75rem 1rem; text-align: center; }
+    .stat-box .num { font-size: 1.4rem; font-weight: 700; color: #6366f1; }
+    .stat-box .label { font-size: 0.72rem; color: #71717a; margin-top: 0.2rem; text-transform: uppercase; letter-spacing: 0.03em; }
+    .section-title { font-size: 0.95rem; font-weight: 600; margin: 1.25rem 0 0.6rem; color: #3f3f46; }
+    .click-table { font-size: 0.78rem; }
+    .click-table th { font-size: 0.75rem; }
+    .click-table td { padding: 0.45rem 0.6rem; }
+    .ua-cell { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #71717a; }
+    .top-list { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.5rem; }
+    .top-tag { background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.2rem 0.65rem; font-size: 0.78rem; font-weight: 600; }
     #no-links { color: #71717a; font-size: 0.9rem; padding: 1rem 0; }
   </style>
 </head>
@@ -63,18 +68,51 @@
   <div class="modal">
     <button class="modal-close" onclick="closeModal()">✕</button>
     <h2 id="modal-title">Stats</h2>
-    <p id="modal-dest" style="color:#71717a;font-size:0.85rem;margin-bottom:1rem;word-break:break-all;"></p>
-    <div class="stat-row">
-      <div class="stat-box"><div class="num" id="stat-clicks">—</div><div class="label">Total Clicks</div></div>
-      <div class="stat-box"><div class="num" id="stat-countries">—</div><div class="label">Countries</div></div>
-    </div>
-    <h2 style="margin-bottom:0.75rem;">Click Log</h2>
+    <p id="modal-dest" style="color:#71717a;font-size:0.82rem;margin-bottom:1rem;word-break:break-all;"></p>
+
+    <div class="stat-grid" id="stat-grid"></div>
+
+    <div id="top-sections"></div>
+
+    <p class="section-title">Click Log</p>
     <div id="click-log"></div>
   </div>
 </div>
 
 <script>
   const WORKER = 'https://link-shortener.danspengeman.workers.dev';
+
+  function parseUA(ua) {
+    if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Unknown' };
+    let browser = 'Other', os = 'Other', device = 'Desktop';
+
+    if (/Edg\//i.test(ua)) browser = 'Edge';
+    else if (/OPR\//i.test(ua)) browser = 'Opera';
+    else if (/Chrome\//i.test(ua)) browser = 'Chrome';
+    else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+    else if (/Safari\//i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
+
+    if (/Windows NT/i.test(ua)) os = 'Windows';
+    else if (/Mac OS X/i.test(ua) && !/iPhone|iPad/i.test(ua)) os = 'macOS';
+    else if (/Android/i.test(ua)) os = 'Android';
+    else if (/iPhone/i.test(ua)) os = 'iOS (iPhone)';
+    else if (/iPad/i.test(ua)) os = 'iOS (iPad)';
+    else if (/Linux/i.test(ua)) os = 'Linux';
+
+    if (/Mobi|Android|iPhone/i.test(ua)) device = 'Mobile';
+    else if (/iPad|Tablet/i.test(ua)) device = 'Tablet';
+
+    return { browser, os, device };
+  }
+
+  function topN(arr, key, n = 5) {
+    const counts = {};
+    arr.forEach(item => {
+      const val = item[key] || 'Unknown';
+      counts[val] = (counts[val] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, n);
+  }
 
   async function createLink() {
     const destination = document.getElementById('destination').value.trim();
@@ -91,7 +129,7 @@
       const data = await res.json();
       if (res.ok) {
         const short = `${WORKER}/${data.slug}`;
-        msg.textContent = `Created: ${short}`;
+        msg.textContent = `Created: ${short} (copied to clipboard)`;
         navigator.clipboard.writeText(short).catch(() => {});
         document.getElementById('destination').value = '';
         document.getElementById('customSlug').value = '';
@@ -122,7 +160,7 @@
           <td><a class="slug-link" href="${short}" target="_blank">/${link.slug}</a></td>
           <td><span class="dest" title="${link.destination}">${link.destination}</span></td>
           <td><span class="badge">${link.click_count}</span></td>
-          <td>${link.created_at.split('T')[0]}</td>
+          <td>${link.created_at ? link.created_at.split('T')[0] : '—'}</td>
           <td>
             <button class="btn-sm" onclick="copyLink('${short}')">Copy</button>
             <button class="btn-sm" onclick="showStats('${link.slug}')">Stats</button>
@@ -147,16 +185,70 @@
   async function showStats(slug) {
     const res = await fetch(`${WORKER}/stats/${slug}`);
     const data = await res.json();
+    const clicks = data.clicks || [];
+
     document.getElementById('modal-title').textContent = `Stats for /${slug}`;
     document.getElementById('modal-dest').textContent = data.link?.destination || '';
-    document.getElementById('stat-clicks').textContent = data.clicks.length;
-    const countries = [...new Set(data.clicks.map(c => c.country).filter(Boolean))];
-    document.getElementById('stat-countries').textContent = countries.length || '—';
+
+    // Parse UAs
+    const enriched = clicks.map(c => ({ ...c, ...parseUA(c.user_agent) }));
+
+    // Summary stats
+    const countries = [...new Set(enriched.map(c => c.country).filter(Boolean))];
+    const cities = [...new Set(enriched.map(c => c.city).filter(Boolean))];
+    const browsers = [...new Set(enriched.map(c => c.browser).filter(Boolean))];
+    const devices = enriched.filter(c => c.device === 'Mobile').length;
+
+    document.getElementById('stat-grid').innerHTML = `
+      <div class="stat-box"><div class="num">${clicks.length}</div><div class="label">Total Clicks</div></div>
+      <div class="stat-box"><div class="num">${countries.length}</div><div class="label">Countries</div></div>
+      <div class="stat-box"><div class="num">${cities.length}</div><div class="label">Cities</div></div>
+      <div class="stat-box"><div class="num">${browsers.length}</div><div class="label">Browsers</div></div>
+      <div class="stat-box"><div class="num">${devices}</div><div class="label">Mobile Clicks</div></div>
+    `;
+
+    // Top lists
+    let tops = '';
+    if (clicks.length) {
+      const sections = [
+        { label: 'Top Countries', data: topN(enriched, 'country') },
+        { label: 'Top Cities', data: topN(enriched, 'city') },
+        { label: 'Top Browsers', data: topN(enriched, 'browser') },
+        { label: 'Top OS', data: topN(enriched, 'os') },
+        { label: 'Top Devices', data: topN(enriched, 'device') },
+        { label: 'Top ISPs', data: topN(enriched, 'isp') },
+        { label: 'Top Referrers', data: topN(enriched.map(c => ({ referrer: c.referrer || 'Direct' })), 'referrer') },
+      ];
+      for (const s of sections) {
+        if (!s.data.length) continue;
+        tops += `<p class="section-title">${s.label}</p><div class="top-list">`;
+        for (const [val, count] of s.data) {
+          tops += `<span class="top-tag">${val} (${count})</span>`;
+        }
+        tops += '</div>';
+      }
+    }
+    document.getElementById('top-sections').innerHTML = tops;
+
+    // Click log
     let log = '';
-    if (data.clicks.length) {
-      log = '<table class="click-table"><thead><tr><th>Time</th><th>Country</th><th>Referrer</th></tr></thead><tbody>';
-      for (const c of data.clicks) {
-        log += `<tr><td>${c.clicked_at}</td><td>${c.country || '—'}</td><td>${c.referrer || 'Direct'}</td></tr>`;
+    if (enriched.length) {
+      log = `<table class="click-table"><thead><tr>
+        <th>Time</th><th>Country</th><th>City</th><th>Region</th>
+        <th>Browser</th><th>OS</th><th>Device</th><th>ISP</th><th>Referrer</th>
+      </tr></thead><tbody>`;
+      for (const c of enriched) {
+        log += `<tr>
+          <td>${c.clicked_at || '—'}</td>
+          <td>${c.country || '—'}</td>
+          <td>${c.city || '—'}</td>
+          <td>${c.region || '—'}</td>
+          <td>${c.browser}</td>
+          <td>${c.os}</td>
+          <td>${c.device}</td>
+          <td>${c.isp || '—'}</td>
+          <td>${c.referrer || 'Direct'}</td>
+        </tr>`;
       }
       log += '</tbody></table>';
     } else {
