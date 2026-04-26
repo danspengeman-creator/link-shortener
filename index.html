@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Link Shortener</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f4f4f5; color: #18181b; min-height: 100vh; padding: 2rem; }
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; }
+    .card { background: #fff; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+    .row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+    input { flex: 1; min-width: 200px; padding: 0.6rem 0.9rem; border: 1px solid #d4d4d8; border-radius: 8px; font-size: 0.95rem; }
+    button { padding: 0.6rem 1.2rem; border: none; border-radius: 8px; font-size: 0.95rem; cursor: pointer; font-weight: 600; }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; background: #e4e4e7; color: #3f3f46; border-radius: 6px; border: none; cursor: pointer; }
+    .btn-sm:hover { background: #d4d4d8; }
+    #message { margin-top: 0.75rem; font-size: 0.9rem; color: #16a34a; min-height: 1.2rem; }
+    #message.error { color: #dc2626; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 2px solid #e4e4e7; color: #71717a; font-weight: 600; }
+    td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #f4f4f5; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .slug-link { color: #6366f1; text-decoration: none; font-weight: 600; }
+    .slug-link:hover { text-decoration: underline; }
+    .dest { color: #71717a; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    .badge { display: inline-block; background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600; }
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10; align-items: center; justify-content: center; }
+    .modal-bg.open { display: flex; }
+    .modal { background: #fff; border-radius: 12px; padding: 1.5rem; width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; position: relative; }
+    .modal h2 { margin-bottom: 0.5rem; }
+    .modal-close { position: absolute; top: 1rem; right: 1rem; background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #71717a; }
+    .stat-row { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .stat-box { flex: 1; min-width: 100px; background: #f4f4f5; border-radius: 8px; padding: 0.75rem 1rem; text-align: center; }
+    .stat-box .num { font-size: 1.5rem; font-weight: 700; color: #6366f1; }
+    .stat-box .label { font-size: 0.75rem; color: #71717a; margin-top: 0.2rem; }
+    .click-table th, .click-table td { font-size: 0.8rem; }
+    #no-links { color: #71717a; font-size: 0.9rem; padding: 1rem 0; }
+  </style>
+</head>
+<body>
+
+<h1>🔗 Link Shortener</h1>
+
+<div class="card">
+  <h2>Create a Short Link</h2>
+  <div class="row">
+    <input id="destination" type="url" placeholder="https://example.com/long-url" />
+    <input id="customSlug" type="text" placeholder="Custom slug (optional)" style="max-width:200px" />
+    <button class="btn-primary" onclick="createLink()">Shorten</button>
+  </div>
+  <div id="message"></div>
+</div>
+
+<div class="card">
+  <h2>Your Links</h2>
+  <div id="links-container"><p id="no-links">Loading...</p></div>
+</div>
+
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">✕</button>
+    <h2 id="modal-title">Stats</h2>
+    <p id="modal-dest" style="color:#71717a;font-size:0.85rem;margin-bottom:1rem;word-break:break-all;"></p>
+    <div class="stat-row">
+      <div class="stat-box"><div class="num" id="stat-clicks">—</div><div class="label">Total Clicks</div></div>
+      <div class="stat-box"><div class="num" id="stat-countries">—</div><div class="label">Countries</div></div>
+    </div>
+    <h2 style="margin-bottom:0.75rem;">Click Log</h2>
+    <div id="click-log"></div>
+  </div>
+</div>
+
+<script>
+  const WORKER = 'https://link-shortener.danspengeman.workers.dev';
+
+  async function createLink() {
+    const destination = document.getElementById('destination').value.trim();
+    const customSlug = document.getElementById('customSlug').value.trim();
+    const msg = document.getElementById('message');
+    msg.className = '';
+    if (!destination) { msg.className = 'error'; msg.textContent = 'Please enter a destination URL.'; return; }
+    try {
+      const res = await fetch(`${WORKER}/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination, customSlug: customSlug || undefined })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const short = `${WORKER}/${data.slug}`;
+        msg.textContent = `Created: ${short}`;
+        navigator.clipboard.writeText(short).catch(() => {});
+        document.getElementById('destination').value = '';
+        document.getElementById('customSlug').value = '';
+        loadLinks();
+      } else {
+        msg.className = 'error';
+        msg.textContent = data.error || 'Something went wrong.';
+      }
+    } catch(e) {
+      msg.className = 'error';
+      msg.textContent = 'Could not reach the Worker.';
+    }
+  }
+
+  async function loadLinks() {
+    const container = document.getElementById('links-container');
+    try {
+      const res = await fetch(`${WORKER}/links`);
+      const links = await res.json();
+      if (!links.length) {
+        container.innerHTML = '<p id="no-links">No links yet. Create one above!</p>';
+        return;
+      }
+      let html = '<table><thead><tr><th>Short Link</th><th>Destination</th><th>Clicks</th><th>Created</th><th></th></tr></thead><tbody>';
+      for (const link of links) {
+        const short = `${WORKER}/${link.slug}`;
+        html += `<tr>
+          <td><a class="slug-link" href="${short}" target="_blank">/${link.slug}</a></td>
+          <td><span class="dest" title="${link.destination}">${link.destination}</span></td>
+          <td><span class="badge">${link.click_count}</span></td>
+          <td>${link.created_at.split('T')[0]}</td>
+          <td>
+            <button class="btn-sm" onclick="copyLink('${short}')">Copy</button>
+            <button class="btn-sm" onclick="showStats('${link.slug}')">Stats</button>
+          </td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<p style="color:#dc2626">Could not load links.</p>';
+    }
+  }
+
+  function copyLink(url) {
+    navigator.clipboard.writeText(url).then(() => {
+      const msg = document.getElementById('message');
+      msg.className = '';
+      msg.textContent = `Copied: ${url}`;
+    });
+  }
+
+  async function showStats(slug) {
+    const res = await fetch(`${WORKER}/stats/${slug}`);
+    const data = await res.json();
+    document.getElementById('modal-title').textContent = `Stats for /${slug}`;
+    document.getElementById('modal-dest').textContent = data.link?.destination || '';
+    document.getElementById('stat-clicks').textContent = data.clicks.length;
+    const countries = [...new Set(data.clicks.map(c => c.country).filter(Boolean))];
+    document.getElementById('stat-countries').textContent = countries.length || '—';
+    let log = '';
+    if (data.clicks.length) {
+      log = '<table class="click-table"><thead><tr><th>Time</th><th>Country</th><th>Referrer</th></tr></thead><tbody>';
+      for (const c of data.clicks) {
+        log += `<tr><td>${c.clicked_at}</td><td>${c.country || '—'}</td><td>${c.referrer || 'Direct'}</td></tr>`;
+      }
+      log += '</tbody></table>';
+    } else {
+      log = '<p style="color:#71717a;font-size:0.9rem;">No clicks yet.</p>';
+    }
+    document.getElementById('click-log').innerHTML = log;
+    document.getElementById('modal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('modal').classList.remove('open');
+  }
+
+  document.getElementById('modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+  });
+
+  loadLinks();
+</script>
+</body>
+</html>
