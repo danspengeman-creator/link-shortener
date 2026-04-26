@@ -36,9 +36,6 @@
     .dest-cell img { width: 16px; height: 16px; flex-shrink: 0; border-radius: 3px; }
     .dest { color: #71717a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .badge { display: inline-block; background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 0.15rem 0.6rem; font-size: 0.8rem; font-weight: 600; }
-    .bot-human { color: #16a34a; font-weight: 600; }
-    .bot-bot { color: #dc2626; font-weight: 600; }
-    .bot-unknown { color: #71717a; }
     .eu-badge { display: inline-block; background: #dbeafe; color: #1d4ed8; border-radius: 4px; padding: 0.1rem 0.4rem; font-size: 0.72rem; font-weight: 600; }
     .edit-row { display: none; background: #f9f9fb; }
     .edit-row.open { display: table-row; }
@@ -128,13 +125,6 @@
     if (/Mobi|Android|iPhone/i.test(ua)) device = 'Mobile';
     else if (/iPad|Tablet/i.test(ua)) device = 'Tablet';
     return { browser, os, device };
-  }
-
-  function botLabel(score) {
-    if (score === -1 || score === null) return '<span class="bot-unknown">—</span>';
-    if (score >= 70) return `<span class="bot-human">Human (${score})</span>`;
-    if (score >= 30) return `<span class="bot-unknown">Unsure (${score})</span>`;
-    return `<span class="bot-bot">Bot (${score})</span>`;
   }
 
   function topN(arr, key, n = 5) {
@@ -342,16 +332,11 @@
     const enriched = clicks.map(c => ({ ...c, ...parseUA(c.user_agent) }));
     const countries = [...new Set(enriched.map(c => c.country).filter(Boolean))];
     const cities = [...new Set(enriched.map(c => c.city).filter(Boolean))];
-    const browsers = [...new Set(enriched.map(c => c.browser).filter(Boolean))];
     const mobileClicks = enriched.filter(c => c.device === 'Mobile').length;
-    const humanClicks = enriched.filter(c => c.bot_score >= 70).length;
-    const botClicks = enriched.filter(c => c.bot_score !== -1 && c.bot_score < 30).length;
     const euClicks = enriched.filter(c => c.is_eu === 1).length;
 
     document.getElementById('stat-grid').innerHTML = `
       <div class="stat-box"><div class="num">${clicks.length}</div><div class="label">Total Clicks</div></div>
-      <div class="stat-box"><div class="num">${humanClicks}</div><div class="label">Human Clicks</div></div>
-      <div class="stat-box"><div class="num">${botClicks}</div><div class="label">Bot Clicks</div></div>
       <div class="stat-box"><div class="num">${countries.length}</div><div class="label">Countries</div></div>
       <div class="stat-box"><div class="num">${cities.length}</div><div class="label">Cities</div></div>
       <div class="stat-box"><div class="num">${mobileClicks}</div><div class="label">Mobile</div></div>
@@ -387,7 +372,7 @@
     if (enriched.length) {
       log = `<table class="click-table"><thead><tr>
         <th>Time</th><th>Country</th><th>City</th><th>Postal</th><th>Region</th>
-        <th>Browser</th><th>OS</th><th>Device</th><th>ISP</th><th>EU</th><th>Bot Score</th><th>Referrer</th>
+        <th>Browser</th><th>OS</th><th>Device</th><th>ISP</th><th>EU</th><th>Referrer</th>
       </tr></thead><tbody>`;
       for (const c of enriched) {
         log += `<tr>
@@ -401,7 +386,6 @@
           <td>${c.device}</td>
           <td>${c.isp || '—'}</td>
           <td>${c.is_eu === 1 ? '<span class="eu-badge">EU</span>' : '—'}</td>
-          <td>${botLabel(c.bot_score)}</td>
           <td>${c.referrer || 'Direct'}</td>
         </tr>`;
       }
