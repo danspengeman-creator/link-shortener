@@ -60,29 +60,50 @@
     #no-links { color: #71717a; font-size: 0.9rem; padding: 1rem 0; }
     .confirm-bar { display: none; align-items: center; gap: 0.75rem; background: #fee2e2; border-radius: 8px; padding: 0.6rem 1rem; margin-top: 0.75rem; font-size: 0.9rem; }
     .confirm-bar.show { display: flex; }
+    /* Login screen */
+    #login-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: -2rem; }
+    .login-card { background: #fff; border-radius: 16px; padding: 2.5rem 2rem; width: 100%; max-width: 360px; box-shadow: 0 4px 24px rgba(0,0,0,0.10); text-align: center; }
+    .login-card h1 { font-size: 1.4rem; margin-bottom: 0.4rem; }
+    .login-card p { color: #71717a; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .login-card input { width: 100%; margin-bottom: 1rem; text-align: center; letter-spacing: 0.1em; }
+    .login-card button { width: 100%; }
+    #login-error { color: #dc2626; font-size: 0.85rem; margin-top: 0.75rem; min-height: 1.2rem; }
+    #app { display: none; }
   </style>
 </head>
 <body>
 
-<h1>🔗 Link Shortener</h1>
-
-<div class="card">
-  <h2>Create a Short Link</h2>
-  <div class="row">
-    <input id="destination" type="url" placeholder="https://example.com/long-url" />
-    <input id="customSlug" type="text" placeholder="Custom slug (optional)" style="max-width:200px" />
-    <button class="btn-primary" onclick="createLink()">Shorten</button>
+<div id="login-screen">
+  <div class="login-card">
+    <h1>🔗 Link Shortener</h1>
+    <p>Enter your password to continue</p>
+    <input type="password" id="login-password" placeholder="Password" onkeydown="if(event.key==='Enter')login()" />
+    <button class="btn-primary" onclick="login()">Sign In</button>
+    <div id="login-error"></div>
   </div>
-  <div id="message"></div>
 </div>
 
-<div class="card">
-  <h2>Your Links</h2>
-  <div id="links-container"><p id="no-links">Loading...</p></div>
-  <div class="confirm-bar" id="confirm-bar">
-    <span id="confirm-text"></span>
-    <button class="btn-sm btn-danger" onclick="confirmDelete()">Yes, delete</button>
-    <button class="btn-sm" onclick="cancelDelete()">Cancel</button>
+<div id="app">
+  <h1>🔗 Link Shortener</h1>
+
+  <div class="card">
+    <h2>Create a Short Link</h2>
+    <div class="row">
+      <input id="destination" type="url" placeholder="https://example.com/long-url" />
+      <input id="customSlug" type="text" placeholder="Custom slug (optional)" style="max-width:200px" />
+      <button class="btn-primary" onclick="createLink()">Shorten</button>
+    </div>
+    <div id="message"></div>
+  </div>
+
+  <div class="card">
+    <h2>Your Links</h2>
+    <div id="links-container"><p id="no-links">Loading...</p></div>
+    <div class="confirm-bar" id="confirm-bar">
+      <span id="confirm-text"></span>
+      <button class="btn-sm btn-danger" onclick="confirmDelete()">Yes, delete</button>
+      <button class="btn-sm" onclick="cancelDelete()">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -104,9 +125,50 @@
 
 <script>
   const WORKER = 'https://spengeman.com';
+  let AUTH_PASSWORD = '';
   let pendingDelete = null;
   let clicksChartInstance = null;
   let openEditSlug = null;
+
+  function authHeaders(extra = {}) {
+    return { 'Content-Type': 'application/json', 'X-Auth-Password': AUTH_PASSWORD, ...extra };
+  }
+
+  async function login() {
+    const pw = document.getElementById('login-password').value;
+    const err = document.getElementById('login-error');
+    err.textContent = '';
+    if (!pw) { err.textContent = 'Please enter a password.'; return; }
+    try {
+      const res = await fetch(`${WORKER}/links`, {
+        headers: { 'X-Auth-Password': pw }
+      });
+      if (res.status === 401) {
+        err.textContent = 'Incorrect password.';
+        return;
+      }
+      AUTH_PASSWORD = pw;
+      sessionStorage.setItem('ls_pw', pw);
+      showApp();
+    } catch(e) {
+      err.textContent = 'Could not reach the server.';
+    }
+  }
+
+  function showApp() {
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    loadLinks();
+  }
+
+  // Auto-login if password is in sessionStorage
+  window.addEventListener('load', () => {
+    const saved = sessionStorage.getItem('ls_pw');
+    if (saved) {
+      AUTH_PASSWORD = saved;
+      showApp();
+    }
+  });
 
   function parseUA(ua) {
     if (!ua) return { browser: 'Unknown', os: 'Unknown', device: 'Desktop' };
@@ -191,7 +253,7 @@
     try {
       const res = await fetch(`${WORKER}/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ destination, customSlug: customSlug || undefined })
       });
       const data = await res.json();
@@ -217,7 +279,8 @@
     cancelDelete();
     openEditSlug = null;
     try {
-      const res = await fetch(`${WORKER}/links`);
+      const res = await fetch(`${WORKER}/links`, { headers: authHeaders() });
+      if (res.status === 401) { sessionStorage.removeItem('ls_pw'); location.reload(); return; }
       const links = await res.json();
       if (!links.length) {
         container.innerHTML = '<p id="no-links">No links yet. Create one above!</p>';
@@ -285,7 +348,7 @@
     if (!destination) return;
     const res = await fetch(`${WORKER}/edit/${slug}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({ destination })
     });
     if (res.ok) {
@@ -304,7 +367,7 @@
 
   async function confirmDelete() {
     if (!pendingDelete) return;
-    await fetch(`${WORKER}/delete/${pendingDelete}`, { method: 'DELETE' });
+    await fetch(`${WORKER}/delete/${pendingDelete}`, { method: 'DELETE', headers: authHeaders() });
     pendingDelete = null;
     loadLinks();
   }
@@ -323,18 +386,16 @@
   }
 
   async function showStats(slug) {
-    const res = await fetch(`${WORKER}/stats/${slug}`);
+    const res = await fetch(`${WORKER}/stats/${slug}`, { headers: authHeaders() });
     const data = await res.json();
     const clicks = data.clicks || [];
     document.getElementById('modal-title').textContent = `Stats for /${slug}`;
     document.getElementById('modal-dest').textContent = data.link?.destination || '';
-
     const enriched = clicks.map(c => ({ ...c, ...parseUA(c.user_agent) }));
     const countries = [...new Set(enriched.map(c => c.country).filter(Boolean))];
     const cities = [...new Set(enriched.map(c => c.city).filter(Boolean))];
     const mobileClicks = enriched.filter(c => c.device === 'Mobile').length;
     const euClicks = enriched.filter(c => c.is_eu === 1).length;
-
     document.getElementById('stat-grid').innerHTML = `
       <div class="stat-box"><div class="num">${clicks.length}</div><div class="label">Total Clicks</div></div>
       <div class="stat-box"><div class="num">${countries.length}</div><div class="label">Countries</div></div>
@@ -342,9 +403,7 @@
       <div class="stat-box"><div class="num">${mobileClicks}</div><div class="label">Mobile</div></div>
       <div class="stat-box"><div class="num">${euClicks}</div><div class="label">EU Visitors</div></div>
     `;
-
     buildClicksChart(enriched);
-
     let tops = '';
     if (clicks.length) {
       const sections = [
@@ -367,7 +426,6 @@
       }
     }
     document.getElementById('top-sections').innerHTML = tops;
-
     let log = '';
     if (enriched.length) {
       log = `<table class="click-table"><thead><tr>
@@ -404,8 +462,6 @@
   document.getElementById('modal').addEventListener('click', function(e) {
     if (e.target === this) closeModal();
   });
-
-  loadLinks();
 </script>
 </body>
 </html>
